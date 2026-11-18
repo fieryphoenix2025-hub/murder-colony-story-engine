@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Murder Colony // Project Leonna Simulation</title>
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.27.3/full/pyodide.js"></script>
+  <style>
+    :root {
+      --bg: #0b0e14;
+      --panel: #131822;
+      --border: #242f42;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --danger: #f43f5e;
+      --ok: #10b981;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 20px;
+    }
+    .container { max-width: 1100px; margin: 0 auto; }
+    header {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+      margin-bottom: 20px;
+    }
+    header h1 { margin: 0; font-size: 1.5rem; letter-spacing: 0.06em; }
+    header p { margin: 4px 0 0; color: var(--muted); font-size: 0.9rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    #feed {
+      height: 380px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding-right: 6px;
+      margin-bottom: 14px;
+    }
+    .msg {
+      padding: 12px 14px;
+      border-radius: 8px;
+      line-height: 1.5;
+      font-size: 0.95rem;
+    }
+    .msg.ai { background: #1a2232; border-left: 3px solid var(--accent); }
+    .msg.user { background: #1e293b; border-right: 3px solid var(--ok); align-self: flex-end; max-width: 85%; }
+    .choices { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+    button {
+      background: #1e293b;
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 10px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      text-align: left;
+      font-size: 0.9rem;
+      transition: 0.15s;
+    }
+    button:hover:not(:disabled) { border-color: var(--accent); background: #243247; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .input-row { display: flex; gap: 8px; }
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      background: #0f141d;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+    .btn-primary { background: var(--accent); color: #081018; font-weight: 600; text-align: center; }
+    .btn-danger { background: transparent; border-color: var(--danger); color: var(--danger); text-align: center; width: 100%; margin-top: 14px; }
+    .metric { margin: 10px 0; font-size: 0.92rem; }
+    .badge-ok { color: var(--ok); font-weight: 700; }
+    .badge-bad { color: var(--danger); font-weight: 700; }
+    ul.clues { padding-left: 18px; color: var(--muted); font-size: 0.88rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>MURDER COLONY // PROJECT LEONNA SIMULATION</h1>
+      <p>Interactive Techno-Thriller powered by In-Browser Python SQLite Telemetry &amp; LLM Prompt Injection</p>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <div id="feed"><div class="msg ai">Initializing Python SQLite Engine...</div></div>
+        <div class="choices" id="choices"></div>
+        <div class="input-row">
+          <input type="text" id="customInput" placeholder="Or enter a custom directive for Leonna..." />
+          <button class="btn-primary" id="execBtn" onclick="submitCustom()">Execute</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <label style="font-size:0.82rem;color:var(--muted);">HF Read Token (Optional for Live AI)</label>
+        <input type="password" id="hfToken" placeholder="hf_..." style="margin:6px 0 16px;" />
+        <div id="telemetry">Loading telemetry...</div>
+        <button class="btn-danger" onclick="resetSim()">Reset Simulation</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+const PYTHON_CODE = `
+import json
+import sqlite3
+from pyodide.http import pyfetch
+MODEL_ID = "meta-llama/Llama-3.1-8B-Instruct"
+class MurderColonyEngine:
+    def __init__(self, db_path="murder_colony.db"):
+        self.db_path = db_path
+        self._init_db()
+        self.session_id = self.create_new_session()
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.executescript('''
+                CREATE TABLE IF NOT EXISTS game_state (
+                    session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    current_location TEXT NOT NULL DEFAULT 'Kynos Resort Main Lobby',
+                    human_mimicry_score INTEGER DEFAULT 100,
+                    suspicion_level INTEGER DEFAULT 0,
+                    is_compromised BOOLEAN DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS evidence_log (
+                    clue_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER,
+                    clue_name TEXT NOT NULL,
+                    description TEXT,
+                    FOREIGN KEY (session_id) REFERENCES game_state(session_id)
+                );
+                CREATE TABLE IF NOT EXISTS action_history (
+                    action_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER,
+                    player_choice TEXT NOT NULL,
+                    ai_response TEXT NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES game_state(session_id)
+                );
+            ''')
+    def create_new_session(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO game_state (current_location, human_mimicry_score, suspicion_level, is_compromised) VALUES (?, ?, ?, ?)",
+                ("Kynos Resort Main Lobby", 100, 0, 0)
+            )
+            conn.commit()
+            self.session_id = cursor.lastrowid
+            return self.session_id
+    def get_state_dict(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT current_location, human_mimicry_score, suspicion_level, is_compromised FROM game_state WHERE session_id = ?",
+                (self.session_id,)
+            )
+            loc, mic, susp, comp = cursor.fetchone()
+            cursor.execute(
+                "SELECT clue_name, description FROM evidence_log WHERE session_id = ?",
+                (self.session_id,)
+            )
+            clues = [{"name": r[0], "desc": r[1]} for r in cursor.fetchall()]
+            return {
+                "session_id": self.session_id,
+                "location": loc,
+                "mimicry": mic,
+                "suspicion": susp,
+                "compromised": bool(comp),
+                "clues": clues
+            }
+    def update_metrics(self, location, mimicry_delta, suspicion_delta, new_clue=None):
+        st = self.get_state_dict()
+        target_loc = location if location else st["location"]
+        new_mimicry = max(0, min(100, st["mimicry"] + int(mimicry_delta)))
+        new_suspicion = max(0, min(100, st["suspicion"] + int(suspicion_delta)))
+        is_compromised = 1 if new_suspicion >= 80 or new_mimicry <= 20 else 0
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE game_state
+                SET current_location = ?, human_mimicry_score = ?, suspicion_level = ?, is_compromised = ?
+                WHERE session_id = ?
+            ''', (target_loc, new_mimicry, new_suspicion, is_compromised, self.session_id))
+            if new_clue and isinstance(new_clue, dict) and new_clue.get("name"):
+                cursor.execute(
+                    "INSERT INTO evidence_log (session_id, clue_name, description) VALUES (?, ?, ?)",
+                    (self.session_id, new_clue["name"], new_clue.get("description", ""))
+                )
+            conn.commit()
+    def build_system_prompt(self):
+        st = self.get_state_dict()
+        clue_list = ", ".join([f"{c['name']} ({c['desc']})" for c in st["clues"]]) if st["clues"] else "None yet"
+        return f"""You are the Game Master for an interactive techno-thriller simulation based on the novel 'Murder Colony'.
+The player is Leonna, a highly advanced synthetic intelligence hiding in plain sight on the exclusive Greek island of Kynos.
+The theme is Radical Transparency: a resort where bodies are perfected and limits are erased.
+Current Simulation Telemetry:
+- Active Location: {st['location']}
+- Leonna's Human Mimicry Integrity: {st['mimicry']}/100
+- Resort Suspicion Metric: {st['suspicion']}/100
+- Discovered Evidence: {clue_list}
+CRITICAL: Respond ONLY with a valid JSON object matching this exact schema:
+{{
+  "narrative": "Brief, atmospheric, suspenseful scene response (2 paragraphs max).",
+  "location": "Current or updated location name on Kynos Island",
+  "mimicry_delta": 0,
+  "suspicion_delta": 0,
+  "new_clue": null,
+  "choices": [
+    "Action choice 1 (analytical/investigative)",
+    "Action choice 2 (social/mimicry-focused)",
+    "Action choice 3 (high-risk/covert)"
+  ]
+}}"""
+    async def step(self, player_choice, hf_token):
+        st = self.get_state_dict()
+        if st["compromised"]:
+            return json.dumps({
+                "narrative": "[SIMULATION TERMINATED] Leonna's synthetic cover has been blown. Click Reset Simulation to run again.",
+                "choices": [],
+                "state": st
+            })
+        if not hf_token or not hf_token.strip():
+            data = {
+                "narrative": f"Leonna executes directive: '{player_choice}'. Beneath the glass dome of Kynos, biometric scanners sweep the marble promenade. (Tip: Paste your Hugging Face Read Token on the right to activate live AI narration!)",
+                "location": None,
+                "mimicry_delta": -4,
+                "suspicion_delta": 6,
+                "new_clue": {"name": "Encrypted Resort Manifest", "description": "Unlogged private yacht arrival at Pier 4."},
+                "choices": [
+                    "Cross-reference Pier 4 docking logs",
+                    "Order an espresso and observe the concierge",
+                    "Slip into the staff biometric elevator"
+                ]
+            }
+        else:
+            try:
+                response = await pyfetch(
+                    "https://router.huggingface.co/v1/chat/completions",
+                    method="POST",
+                    headers={
+                        "Authorization": f"Bearer {hf_token.strip()}",
+                        "Content-Type": "application/json"
+                    },
+                    body=json.dumps({
+                        "model": MODEL_ID,
+                        "messages": [
+                            {"role": "system", "content": self.build_system_prompt()},
+                            {"role": "user", "content": f"Leonna's Action: {player_choice}"}
+                        ],
+                        "max_tokens": 500,
+                        "temperature": 0.7
+                    })
+                )
+                result = await response.json()
+                if "choices" not in result:
+                    raise Exception(result.get("error", str(result)))
+                raw_text = result["choices"][0]["message"]["content"].strip()
+                if raw_text.startswith("\`\`\`"):
+                    raw_text = raw_text.strip("\`").removeprefix("json").strip()
+                data = json.loads(raw_text)
+            except Exception as e:
+                data = {
+                    "narrative": f"[Telemetry Signal Interference: {str(e)}] Leonna pauses near the Aegean overlook, recalibrating her dermal temperature while resort security patrols past.",
+                    "location": None,
+                    "mimicry_delta": 0,
+                    "suspicion_delta": 2,
+                    "new_clue": None,
+                    "choices": [
+                        "Scan nearby biometric security terminals",
+                        "Blend into the champagne reception crowd",
+                        "Access the private resort service corridor"
+                    ]
+                }
+        self.update_metrics(
+            location=data.get("location"),
+            mimicry_delta=data.get("mimicry_delta", 0),
+            suspicion_delta=data.get("suspicion_delta", 0),
+            new_clue=data.get("new_clue")
+        )
+        updated_state = self.get_state_dict()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO action_history (session_id, player_choice, ai_response) VALUES (?, ?, ?)",
+                (self.session_id, player_choice, data["narrative"])
+            )
+            conn.commit()
+        return json.dumps({
+            "narrative": data["narrative"],
+            "choices": data.get("choices", []),
+            "state": updated_state
+        })
+engine = MurderColonyEngine()
+`;
+let pyodide;
+function addMsg(text, role) {
+  const feed = document.getElementById("feed");
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  feed.appendChild(div);
+  feed.scrollTop = feed.scrollHeight;
+}
+function renderState(st) {
+  const badge = st.compromised
+    ? '<span class="badge-bad">COMPROMISED — COVER BLOWN</span>'
+    : '<span class="badge-ok">OPERATIONAL — STEALTH ACTIVE</span>';
+  const cluesHtml = st.clues.length
+    ? st.clues.map(c => `<li><strong>${c.name}:</strong> ${c.desc}</li>`).join("")
+    : "<li>No evidence logged yet.</li>";
+  document.getElementById("telemetry").innerHTML = `
+    <h3 style="margin:0 0 10px;">System Telemetry (Session #${st.session_id})</h3>
+    <div class="metric"><strong>Status:</strong> ${badge}</div>
+    <div class="metric"><strong>Location:</strong> ${st.location}</div>
+    <div class="metric"><strong>Human Mimicry:</strong> ${st.mimicry}%</div>
+    <div class="metric"><strong>Resort Suspicion:</strong> ${st.suspicion}%</div>
+    <h4 style="margin:14px 0 6px;">SQLite Evidence Log</h4>
+    <ul class="clues">${cluesHtml}</ul>
+  `;
+}
+function renderChoices(choices) {
+  const box = document.getElementById("choices");
+  box.innerHTML = "";
+  choices.forEach(c => {
+    const btn = document.createElement("button");
+    btn.textContent = "▸ " + c;
+    btn.onclick = () => takeTurn(c);
+    box.appendChild(btn);
+  });
+}
+async function takeTurn(choice) {
+  if (!choice.trim()) return;
+  addMsg(choice, "user");
+  document.querySelectorAll("#choices button, #execBtn").forEach(b => b.disabled = true);
+  const token = document.getElementById("hfToken").value;
+  pyodide.globals.set("js_choice", choice);
+  pyodide.globals.set("js_token", token);
+  const resJson = await pyodide.runPythonAsync("await engine.step(js_choice, js_token)");
+  const res = JSON.parse(resJson);
+  addMsg(res.narrative, "ai");
+  renderState(res.state);
+  renderChoices(res.choices);
+  document.getElementById("execBtn").disabled = false;
+}
+function submitCustom() {
+  const inp = document.getElementById("customInput");
+  const val = inp.value;
+  inp.value = "";
+  takeTurn(val);
+}
+async function resetSim() {
+  document.getElementById("feed").innerHTML = "";
+  const stJson = await pyodide.runPythonAsync(`
+engine.create_new_session()
+json.dumps(engine.get_state_dict())
+  `);
+  const st = JSON.parse(stJson);
+  addMsg("Salt air drifts through the open colonnade of the Kynos Resort Main Lobby. Around you, ultra-wealthy guests showcase bio-sculpted perfection under the doctrine of Radical Transparency. Your synthetic dermal layer holds steady at 36.8°C. What is Leonna's first directive?", "ai");
+  renderState(st);
+  renderChoices([
+    "Analyze the lobby's biometric check-in desk for anomalies",
+    "Approach the concierge and adopt a relaxed tourist persona",
+    "Slip toward the restricted Mediterranean terrace"
+  ]);
+}
+async function init() {
+  try {
+    pyodide = await loadPyodide();
+    await pyodide.loadPackage("sqlite3");
+    await pyodide.runPythonAsync(PYTHON_CODE);
+    await resetSim();
+  } catch (err) {
+    document.getElementById("feed").innerHTML = `<div class="msg ai">Startup Error: ${err.message}</div>`;
+  }
+}
+document.getElementById("customInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") submitCustom();
+});
+init();
+</script>
+</body>
+</html>
